@@ -916,7 +916,65 @@ impl SubscriptionContract {
         env.events()
             .publish((symbol_short!("upgrade"),), new_wasm_hash);
     }
+pub fn rate_service(
+    env: Env,
+    subscriber: Address,
+    service_id: u64,
+    score: u32,
+) -> Result<(), ContractError> {
+    subscriber.require_auth();
 
+    // Ensure service exists
+    let svc_key = DataKey::Service(service_id);
+    if !env.storage().persistent().has(&svc_key) {
+        return Err(ContractError::ServiceNotFound);
+    }
+
+    // Validate rating score
+    if score < 1 || score > 5 {
+        return Err(ContractError::InvalidRating);
+    }
+
+    // Prevent duplicate rating
+    let rated_key = DataKey::RatingGiven(subscriber.clone(), service_id);
+    if env.storage().persistent().has(&rated_key) {
+        return Err(ContractError::AlreadyRated);
+    }
+
+    let rating_key = DataKey::ServiceRating(service_id);
+
+    let mut rating: ServiceRating = env
+        .storage()
+        .persistent()
+        .get(&rating_key)
+        .unwrap_or(ServiceRating {
+            total_score: 0,
+            total_raters: 0,
+        });
+
+    rating.total_score += score;
+    rating.total_raters += 1;
+
+    env.storage().persistent().set(&rating_key, &rating);
+    env.storage().persistent().set(&rated_key, &true);
+
+    env.events().publish(
+        (symbol_short!("rate"), service_id),
+        (subscriber, score),
+    );
+
+    Ok(())
+}
+
+pub fn get_service_rating(env: Env, service_id: u64) -> ServiceRating {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ServiceRating(service_id))
+        .unwrap_or(ServiceRating {
+            total_score: 0,
+            total_raters: 0,
+        })
+}
     pub fn version(_env: Env) -> u32 {
         1
     }
