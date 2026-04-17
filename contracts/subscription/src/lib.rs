@@ -33,6 +33,8 @@ pub enum ContractError {
     InvalidServiceName = 10,
     SubscriptionExpired = 11,
     ServiceNotActive = 12,
+    InvalidRating = 13,
+    AlreadyRated = 14,
 }
 
 // ---------------------------------------------------------------------------
@@ -48,29 +50,20 @@ pub enum DataKey {
     NextSubId,
     // Persistent storage
     Service(u64),
-    MerchantServices(Address),
-    Sub(u64),
-    SubscriberSubs(Address),
-    ServiceSubs(u64),
-    SubServicePair(Address, u64),
+MerchantServices(Address),
+Sub(u64),
+SubscriberSubs(Address),
+ServiceSubs(u64),
+SubServicePair(Address, u64),
+
+ServiceRating(u64),
+RatingGiven(Address, u64),
 }
 
 // ---------------------------------------------------------------------------
 // Domain types
 // ---------------------------------------------------------------------------
-#[derive(Clone, PartialEq, Debug)]
-#[contracttype]
-pub struct Service {
-    pub service_id: u64,
-    pub merchant: Address,
-    pub name: String,
-    pub price: i128,
-    pub period_secs: u64,
-    pub trial_period_secs: u64,
-    pub approve_periods: u64,
-    pub is_active: bool,
-    pub created_at: u64,
-}
+
 
 #[derive(Clone, PartialEq, Debug)]
 #[contracttype]
@@ -86,6 +79,13 @@ pub struct Subscription {
     pub service_end_ts: u64,
     pub next_charge_ts: u64,
     pub created_at: u64,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+#[contracttype]
+pub struct ServiceRating {
+    pub total_score: u32,
+    pub total_raters: u32,
 }
 
 #[derive(Clone, PartialEq, Debug)]
