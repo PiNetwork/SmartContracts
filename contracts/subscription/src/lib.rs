@@ -53,6 +53,7 @@ pub enum DataKey {
     SubscriberSubs(Address),
     ServiceSubs(u64),
     SubServicePair(Address, u64),
+    TrialUsed(Address, u64),
 }
 
 // ---------------------------------------------------------------------------
@@ -339,9 +340,7 @@ impl SubscriptionContract {
 
         // ---- Dedup check ----
         let pair_key = DataKey::SubServicePair(subscriber.clone(), service_id);
-        let had_trial = if let Some(existing_sub_id) =
-            env.storage().persistent().get::<_, u64>(&pair_key)
-        {
+        if let Some(existing_sub_id) = env.storage().persistent().get::<_, u64>(&pair_key) {
             bump_persistent(&env, &pair_key, service.period_secs);
             let sub_key = DataKey::Sub(existing_sub_id);
             if let Some(existing) = env.storage().persistent().get::<_, Subscription>(&sub_key) {
@@ -349,18 +348,20 @@ impl SubscriptionContract {
                 if existing.auto_renew || env.ledger().timestamp() < existing.service_end_ts {
                     return Err(ContractError::AlreadySubscribed);
                 }
-                existing.trial_period_secs > 0
-            } else {
-                false
             }
-        } else {
-            false
-        };
+        }
 
-        // Prevent repeated free trial: if the subscriber already used a trial
-        // for this service, they cannot re-subscribe without auto_renew.
-        if had_trial && !auto_renew && service.trial_period_secs > 0 {
-            return Err(ContractError::AlreadySubscribed);
+        // Trial consumption tracking (trial-abuse prevention). A subscriber
+        // that already consumed the trial for this service does NOT get a
+        // second trial; the new subscription starts on the paid schedule.
+        // Without this, a malicious subscriber can induce a payment failure
+        // after the trial (e.g. revoke the token allowance), which drops
+        // auto_renew to false; once service_end_ts lapses the dedup gate lets
+        // them re-subscribe with auto_renew=true and receive a fresh trial.
+        let trial_used_key = DataKey::TrialUsed(subscriber.clone(), service_id);
+        let trial_already_used = env.storage().persistent().has(&trial_used_key);
+        if trial_already_used {
+            bump_persistent(&env, &trial_used_key, service.period_secs);
         }
 
         let now = env.ledger().timestamp();
@@ -368,7 +369,9 @@ impl SubscriptionContract {
         let token = get_token(&env);
         let token_client = TokenClient::new(&env, &token);
 
-        let has_trial = service.trial_period_secs > 0;
+        // Trial is only granted once per (subscriber, service). Re-subscribers
+        // who already consumed the trial fall through to the paid branch.
+        let has_trial = service.trial_period_secs > 0 && !trial_already_used;
 
         let sub = if has_trial {
             let trial_end = checked_add_ts(now, service.trial_period_secs)?;
@@ -449,6 +452,19 @@ impl SubscriptionContract {
 
         env.storage().persistent().set(&pair_key, &sub_id);
         bump_persistent(&env, &pair_key, ps);
+
+        // Record trial consumption with a TTL large enough to outlive the
+        // subscription lifecycle, so the trial-abuse gate above remains
+        // effective after the current subscription's Sub record is recycled.
+        if has_trial {
+            env.storage().persistent().set(&trial_used_key, &true);
+            let max_ttl = env.storage().max_ttl().saturating_sub(1);
+            env.storage().persistent().extend_ttl(
+                &trial_used_key,
+                PERSISTENT_TTL_THRESHOLD,
+                max_ttl,
+            );
+        }
 
         // Append to subscriber's list
         let ss_key = DataKey::SubscriberSubs(subscriber.clone());
