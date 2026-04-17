@@ -314,8 +314,10 @@ fn test_subscribe_trial_abuse_blocked() {
     let s = setup();
     let svc = register_trial_service(&s);
 
-    // First trial subscription (no auto_renew)
-    s.client.subscribe(&s.subscriber, &svc.service_id, &false);
+    // First trial subscription consumes the trial for this (subscriber, service)
+    let sub1 = s.client.subscribe(&s.subscriber, &svc.service_id, &false);
+    assert_eq!(sub1.trial_period_secs, WEEK);
+    assert_eq!(s.token.balance(&s.subscriber), INITIAL_BALANCE);
 
     // Wait for trial to expire
     advance_time(&s.env, WEEK + 1);
@@ -325,15 +327,15 @@ fn test_subscribe_trial_abuse_blocked() {
         false
     );
 
-    // Attempt to get another free trial — should be blocked
-    let result = s
+    // Re-subscribing is allowed but NO new trial is granted — the subscriber
+    // pays for the first period immediately.
+    let sub2 = s
         .client
-        .try_subscribe(&s.subscriber, &svc.service_id, &false);
-    assert_eq!(result, Err(Ok(ContractError::AlreadySubscribed)));
-
-    // But re-subscribing with auto_renew=true should work
-    let sub2 = s.client.subscribe(&s.subscriber, &svc.service_id, &true);
-    assert_eq!(sub2.auto_renew, true);
+        .subscribe(&s.subscriber, &svc.service_id, &false);
+    assert_eq!(sub2.trial_period_secs, 0);
+    assert_eq!(sub2.trial_end_ts, 0);
+    assert_eq!(s.token.balance(&s.subscriber), INITIAL_BALANCE - PRICE);
+    assert_ne!(sub2.sub_id, sub1.sub_id);
 }
 
 #[test]
@@ -941,4 +943,79 @@ fn test_timestamp_overflow() {
         .client
         .try_subscribe(&s.subscriber, &svc.service_id, &true);
     assert_eq!(result, Err(Ok(ContractError::TimestampOverflow)));
+}
+
+// ===========================================================================
+// Trial-abuse regression: once a trial is consumed it is not granted again,
+// even when the subscriber induces a post-trial payment failure to reset the
+// subscription state.
+// ===========================================================================
+
+#[test]
+fn test_trial_not_regranted_after_payment_failure() {
+    let s = setup();
+    let svc = register_trial_service(&s);
+
+    let sub1 = s.client.subscribe(&s.subscriber, &svc.service_id, &true);
+    assert_eq!(sub1.trial_period_secs, WEEK);
+    assert_eq!(s.token.balance(&s.subscriber), INITIAL_BALANCE);
+
+    s.token.approve(&s.subscriber, &s.contract_addr, &0, &0);
+
+    advance_time(&s.env, WEEK + 1);
+    let result = s.client.process(&s.merchant, &svc.service_id, &0, &100);
+    assert_eq!(result.failed, 1);
+
+    let sub2 = s.client.subscribe(&s.subscriber, &svc.service_id, &true);
+    assert_eq!(sub2.trial_period_secs, 0);
+    assert_eq!(sub2.trial_end_ts, 0);
+    assert_eq!(s.token.balance(&s.subscriber), INITIAL_BALANCE - PRICE);
+    assert_ne!(sub2.sub_id, sub1.sub_id);
+}
+
+#[test]
+fn test_trial_not_regranted_after_balance_drain() {
+    let s = setup();
+    let svc = register_trial_service(&s);
+
+    let sub1 = s.client.subscribe(&s.subscriber, &svc.service_id, &true);
+    assert_eq!(sub1.trial_period_secs, WEEK);
+
+    let drain = s.token.balance(&s.subscriber);
+    s.token.transfer(&s.subscriber, &s.admin, &drain);
+
+    advance_time(&s.env, WEEK + 1);
+    let result = s.client.process(&s.merchant, &svc.service_id, &0, &100);
+    assert_eq!(result.failed, 1);
+
+    s.token_admin.mint(&s.subscriber, &INITIAL_BALANCE);
+
+    let sub2 = s.client.subscribe(&s.subscriber, &svc.service_id, &true);
+    assert_eq!(sub2.trial_period_secs, 0);
+    assert_eq!(sub2.trial_end_ts, 0);
+    assert_eq!(s.token.balance(&s.subscriber), INITIAL_BALANCE - PRICE);
+}
+
+#[test]
+fn test_paid_subscriber_does_not_set_trial_used() {
+    let s = setup();
+    let svc = register_default_service(&s);
+
+    let sub1 = s.client.subscribe(&s.subscriber, &svc.service_id, &true);
+    assert_eq!(sub1.trial_period_secs, 0);
+    s.client.cancel(&s.subscriber, &sub1.sub_id);
+
+    advance_time(&s.env, MONTH + 1);
+
+    let trial_svc = s.client.register_service(
+        &s.merchant2,
+        &String::from_str(&s.env, "Trial"),
+        &PRICE,
+        &MONTH,
+        &WEEK,
+        &12,
+    );
+
+    let sub2 = s.client.subscribe(&s.subscriber, &trial_svc.service_id, &true);
+    assert_eq!(sub2.trial_period_secs, WEEK);
 }
