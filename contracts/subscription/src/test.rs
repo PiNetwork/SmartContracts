@@ -942,3 +942,75 @@ fn test_timestamp_overflow() {
         .try_subscribe(&s.subscriber, &svc.service_id, &true);
     assert_eq!(result, Err(Ok(ContractError::TimestampOverflow)));
 }
+
+#[test]
+fn test_rate_service_success() {
+    let s = setup();
+    let svc = register_default_service(&s);
+
+    s.client.rate_service(&s.subscriber, &svc.service_id, &5);
+
+    let rating = s.client.get_service_rating(&svc.service_id);
+
+    assert_eq!(rating.total_score, 5);
+    assert_eq!(rating.total_raters, 1);
+
+}
+#[test]
+fn test_get_average_rating() {
+    let s = setup();
+    let svc = register_default_service(&s);
+
+    s.client.rate_service(&s.subscriber, &svc.service_id, &5);
+    s.client.rate_service(&s.subscriber2, &svc.service_id, &3);
+
+    let avg = s.client.get_average_rating(&svc.service_id);
+
+    assert_eq!(avg, 4);
+}
+#[test]
+#[should_panic]
+fn test_rate_service_duplicate_rejected() {
+    let s = setup();
+    let svc = register_default_service(&s);
+
+    s.client.rate_service(&s.subscriber, &svc.service_id, &5);
+    s.client.rate_service(&s.subscriber, &svc.service_id, &4);
+}
+#[test]
+#[should_panic]
+fn test_rate_service_invalid_score() {
+    let s = setup();
+    let svc = register_default_service(&s);
+
+    s.client.rate_service(&s.subscriber, &svc.service_id, &6);
+}
+#[test]
+#[should_panic]
+fn test_rate_service_not_found() {
+    let s = setup();
+
+    s.client.rate_service(&s.subscriber, &999, &5);
+}
+#[test]
+fn test_rate_service_multiple_users() {
+    let s = setup();
+    let svc = register_default_service(&s);
+
+    s.client.rate_service(&s.subscriber, &svc.service_id, &5);
+    s.client.rate_service(&s.subscriber2, &svc.service_id, &3);
+
+    let rating = s.client.get_service_rating(&svc.service_id);
+
+    assert_eq!(rating.total_score, 8);
+    assert_eq!(rating.total_raters, 2);
+}
+#[test]
+#[should_panic]
+fn test_rate_service_requires_active_subscription() {
+    let s = setup();
+    let svc = register_default_service(&s);
+
+    // user belum subscribe, harus gagal
+    s.client.rate_service(&s.subscriber, &svc.service_id, &5);
+}
