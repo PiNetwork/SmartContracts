@@ -942,3 +942,129 @@ fn test_timestamp_overflow() {
         .try_subscribe(&s.subscriber, &svc.service_id, &true);
     assert_eq!(result, Err(Ok(ContractError::TimestampOverflow)));
 }
+#[test]
+fn test_rate_service_success() {
+    let env = Env::default();
+    let contract_id = env.register(SubscriptionContract, ());
+    let client = SubscriptionContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let subscriber = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.__constructor(&admin, &token);
+
+    let service = client.register_service(
+        &merchant,
+        &String::from_str(&env, "Premium Plan"),
+        &100,
+        &30,
+        &0,
+        &1,
+    );
+
+    client.rate_service(&subscriber, &service.service_id, &5);
+
+    let rating = client.get_service_rating(&service.service_id);
+
+    assert_eq!(rating.total_score, 5);
+    assert_eq!(rating.total_raters, 1);
+}
+#[test]
+#[should_panic]
+fn test_rate_service_duplicate_rejected() {
+    let env = Env::default();
+    let contract_id = env.register(SubscriptionContract, ());
+    let client = SubscriptionContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let subscriber = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.__constructor(&admin, &token);
+
+    let service = client.register_service(
+        &merchant,
+        &String::from_str(&env, "Premium Plan"),
+        &100,
+        &30,
+        &0,
+        &1,
+    );
+
+    client.rate_service(&subscriber, &service.service_id, &5);
+    client.rate_service(&subscriber, &service.service_id, &4);
+}
+#[test]
+#[should_panic]
+fn test_rate_service_invalid_score() {
+    let env = Env::default();
+    let contract_id = env.register(SubscriptionContract, ());
+    let client = SubscriptionContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let subscriber = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.__constructor(&admin, &token);
+
+    let service = client.register_service(
+        &merchant,
+        &String::from_str(&env, "Premium Plan"),
+        &100,
+        &30,
+        &0,
+        &1,
+    );
+
+    client.rate_service(&subscriber, &service.service_id, &6);
+}
+#[test]
+#[should_panic]
+fn test_rate_service_not_found() {
+    let env = Env::default();
+    let contract_id = env.register(SubscriptionContract, ());
+    let client = SubscriptionContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let subscriber = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.__constructor(&admin, &token);
+
+    client.rate_service(&subscriber, &999, &5);
+}
+#[test]
+fn test_rate_service_multiple_users() {
+    let env = Env::default();
+    let contract_id = env.register(SubscriptionContract, ());
+    let client = SubscriptionContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.__constructor(&admin, &token);
+
+    let service = client.register_service(
+        &merchant,
+        &String::from_str(&env, "Premium Plan"),
+        &100,
+        &30,
+        &0,
+        &1,
+    );
+
+    client.rate_service(&user1, &service.service_id, &5);
+    client.rate_service(&user2, &service.service_id, &3);
+
+    let rating = client.get_service_rating(&service.service_id);
+
+    assert_eq!(rating.total_score, 8);
+    assert_eq!(rating.total_raters, 2);
+}
