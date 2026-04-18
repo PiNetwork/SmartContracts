@@ -1005,3 +1005,12 @@ fn test_rate_service_multiple_users() {
     assert_eq!(rating.total_score, 8);
     assert_eq!(rating.total_raters, 2);
 }
+#[test]
+#[should_panic]
+fn test_rate_service_requires_active_subscription() {
+    let s = setup();
+    let svc = register_default_service(&s);
+
+    // user belum subscribe, harus gagal
+    s.client.rate_service(&s.subscriber, &svc.service_id, &5);
+}
