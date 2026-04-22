@@ -34,5 +34,11 @@ jobs:
       - name: Cache cargo artifacts
         uses: swatinem/rust-cache@v2
 
+      - name: Add wasm target
+        run: rustup target add wasm32v1-none
+
+      - name: Build subscription wasm
+        run: cargo build -p subscription --target wasm32v1-none --release
+
       - name: Run tests
         run: cargo test -p subscription
