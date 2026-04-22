@@ -270,7 +270,7 @@ Batch-charges due subscriptions for a service. This is the core billing function
 
 **Pagination:** Soroban transactions have finite resource limits (read/write ledger entries and bytes per transaction). Large subscriber sets must be processed in batches using `offset` and `limit`. The returned `ProcessResult.total` indicates the total number of subscriptions, allowing the caller to determine how many batches are needed.
 
-`process()` also enforces a hard page-size cap of `100` subscriptions per call. Passing a larger `limit` processes only the first `100` entries in that window.
+`process()` also enforces a hard page-size cap of `25` subscriptions per call. Passing a larger `limit` processes only the first `25` entries in that window.
 
 **Example batch loop:**
 ```

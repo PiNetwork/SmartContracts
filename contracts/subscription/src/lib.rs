@@ -13,7 +13,7 @@ const INSTANCE_TTL_EXTEND: u32 = 518_400; // ~30 days
 const PERSISTENT_TTL_THRESHOLD: u32 = 17_280;
 const PERSISTENT_TTL_EXTEND_MIN: u32 = 518_400; // ~30 days floor
 const SECS_PER_LEDGER: u64 = 5;
-const MAX_PROCESS_BATCH_SIZE: u32 = 100;
+const MAX_PROCESS_BATCH_SIZE: u32 = 25;
 const MAX_QUERY_PAGE_SIZE: u32 = 100;
 
 // ---------------------------------------------------------------------------
