@@ -156,6 +156,20 @@ fn test_register_service_invalid_name() {
 }
 
 #[test]
+fn test_register_service_timestamp_overflow() {
+    let s = setup();
+    let result = s.client.try_register_service(
+        &s.merchant,
+        &String::from_str(&s.env, "Overflow"),
+        &PRICE,
+        &u64::MAX,
+        &1,
+        &2,
+    );
+    assert_eq!(result, Err(Ok(ContractError::TimestampOverflow)));
+}
+
+#[test]
 fn test_register_multiple_services() {
     let s = setup();
     let svc1 = register_default_service(&s);
@@ -812,6 +826,26 @@ fn test_process_skips_no_auto_renew() {
     assert_eq!(s.token.balance(&s.subscriber), INITIAL_BALANCE - PRICE);
 }
 
+#[test]
+fn test_process_caps_batch_size() {
+    let s = setup();
+    let svc = register_default_service(&s);
+
+    for _ in 0..(MAX_PROCESS_BATCH_SIZE + 1) {
+        let subscriber = Address::generate(&s.env);
+        s.token_admin.mint(&subscriber, &INITIAL_BALANCE);
+        s.client.subscribe(&subscriber, &svc.service_id, &true);
+        s.token
+            .approve(&subscriber, &s.contract_addr, &INITIAL_BALANCE, &10000);
+    }
+
+    advance_time(&s.env, MONTH + 1);
+
+    let result = s.client.process(&s.merchant, &svc.service_id, &0, &u32::MAX);
+    assert_eq!(result.charged, MAX_PROCESS_BATCH_SIZE);
+    assert_eq!(result.total, MAX_PROCESS_BATCH_SIZE + 1);
+}
+
 // ===========================================================================
 // Access Control
 // ===========================================================================
@@ -869,6 +903,30 @@ fn test_get_subscriber_subs() {
 }
 
 #[test]
+fn test_get_subscriber_subs_paginated() {
+    let s = setup();
+    let svc1 = register_default_service(&s);
+    let svc2 = s.client.register_service(
+        &s.merchant2,
+        &String::from_str(&s.env, "Other"),
+        &500,
+        &WEEK,
+        &0,
+        &12,
+    );
+
+    s.client.subscribe(&s.subscriber, &svc1.service_id, &true);
+    s.client.subscribe(&s.subscriber, &svc2.service_id, &true);
+
+    let page = s
+        .client
+        .get_subscriber_subs_paginated(&s.subscriber, &1, &1);
+    assert_eq!(page.total, 2);
+    assert_eq!(page.subscriptions.len(), 1);
+    assert_eq!(page.subscriptions.get(0).unwrap().service_id, svc2.service_id);
+}
+
+#[test]
 fn test_get_merchant_subs() {
     let s = setup();
     let svc = register_default_service(&s);
@@ -878,6 +936,22 @@ fn test_get_merchant_subs() {
 
     let subs = s.client.get_merchant_subs(&s.merchant, &svc.service_id);
     assert_eq!(subs.len(), 2);
+}
+
+#[test]
+fn test_get_merchant_subs_paginated() {
+    let s = setup();
+    let svc = register_default_service(&s);
+
+    s.client.subscribe(&s.subscriber, &svc.service_id, &true);
+    s.client.subscribe(&s.subscriber2, &svc.service_id, &true);
+
+    let page = s
+        .client
+        .get_merchant_subs_paginated(&s.merchant, &svc.service_id, &1, &1);
+    assert_eq!(page.total, 2);
+    assert_eq!(page.subscriptions.len(), 1);
+    assert_eq!(page.subscriptions.get(0).unwrap().subscriber, s.subscriber2);
 }
 
 #[test]

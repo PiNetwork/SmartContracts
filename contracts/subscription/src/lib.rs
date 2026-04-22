@@ -13,6 +13,8 @@ const INSTANCE_TTL_EXTEND: u32 = 518_400; // ~30 days
 const PERSISTENT_TTL_THRESHOLD: u32 = 17_280;
 const PERSISTENT_TTL_EXTEND_MIN: u32 = 518_400; // ~30 days floor
 const SECS_PER_LEDGER: u64 = 5;
+const MAX_PROCESS_BATCH_SIZE: u32 = 25;
+const MAX_QUERY_PAGE_SIZE: u32 = 100;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -94,6 +96,13 @@ pub struct ProcessResult {
     pub charged: u32,
     pub failed: u32,
     pub skipped: u32,
+    pub total: u32,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+#[contracttype]
+pub struct SubscriptionPage {
+    pub subscriptions: Vec<Subscription>,
     pub total: u32,
 }
 
@@ -217,6 +226,26 @@ fn do_approve(
     Ok(())
 }
 
+fn paginate_subscriptions(env: &Env, sub_ids: &Vec<u64>, offset: u32, limit: u32) -> SubscriptionPage {
+    let total = sub_ids.len();
+    let capped_limit = core::cmp::min(limit, MAX_QUERY_PAGE_SIZE);
+    let start = offset.min(total);
+    let end = start.saturating_add(capped_limit).min(total);
+
+    let mut subscriptions = Vec::new(env);
+    for i in start..end {
+        let sid = sub_ids.get(i).unwrap();
+        if let Some(sub) = env.storage().persistent().get::<_, Subscription>(&DataKey::Sub(sid)) {
+            subscriptions.push_back(sub);
+        }
+    }
+
+    SubscriptionPage {
+        subscriptions,
+        total,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
@@ -255,6 +284,14 @@ impl SubscriptionContract {
         if approve_periods == 0 {
             return Err(ContractError::InvalidPeriod);
         }
+
+        period_secs
+            .checked_mul(approve_periods)
+            .and_then(|secs| secs.checked_add(trial_period_secs))
+            .ok_or(ContractError::TimestampOverflow)?;
+        price
+            .checked_mul(approve_periods as i128)
+            .ok_or(ContractError::TimestampOverflow)?;
 
         merchant.require_auth();
 
@@ -655,7 +692,8 @@ impl SubscriptionContract {
 
         let total = sub_ids.len();
         let start = offset.min(total);
-        let end = start.saturating_add(limit).min(total);
+        let capped_limit = core::cmp::min(limit, MAX_PROCESS_BATCH_SIZE);
+        let end = start.saturating_add(capped_limit).min(total);
 
         let mut charged: u32 = 0;
         let mut failed: u32 = 0;
@@ -822,6 +860,24 @@ impl SubscriptionContract {
         result
     }
 
+    pub fn get_subscriber_subs_paginated(
+        env: Env,
+        subscriber: Address,
+        offset: u32,
+        limit: u32,
+    ) -> SubscriptionPage {
+        subscriber.require_auth();
+
+        let ss_key = DataKey::SubscriberSubs(subscriber);
+        let sub_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&ss_key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        paginate_subscriptions(&env, &sub_ids, offset, limit)
+    }
+
     pub fn get_merchant_subs(
         env: Env,
         merchant: Address,
@@ -857,6 +913,36 @@ impl SubscriptionContract {
             }
         }
         Ok(result)
+    }
+
+    pub fn get_merchant_subs_paginated(
+        env: Env,
+        merchant: Address,
+        service_id: u64,
+        offset: u32,
+        limit: u32,
+    ) -> Result<SubscriptionPage, ContractError> {
+        merchant.require_auth();
+
+        let svc_key = DataKey::Service(service_id);
+        let service: Service = env
+            .storage()
+            .persistent()
+            .get(&svc_key)
+            .ok_or(ContractError::ServiceNotFound)?;
+
+        if service.merchant != merchant {
+            return Err(ContractError::NotServiceOwner);
+        }
+
+        let svc_subs_key = DataKey::ServiceSubs(service_id);
+        let sub_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&svc_subs_key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        Ok(paginate_subscriptions(&env, &sub_ids, offset, limit))
     }
 
     pub fn get_service(env: Env, service_id: u64) -> Result<Service, ContractError> {
