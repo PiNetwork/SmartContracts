@@ -27,7 +27,7 @@ The contract implements a merchant-initiated pull-payment model:
 
 Key design properties:
 - **No charge drift** -- `next_charge_ts` is always computed as `old_next_charge_ts + period_secs`, not from wall-clock time.
-- **Paginated batch processing** -- `process()` accepts `offset` and `limit` parameters to handle large subscriber sets across multiple transactions.
+- **Paginated batch processing** -- `process()` accepts `offset` and `limit` parameters and enforces a hard maximum page size per call to handle large subscriber sets across multiple transactions.
 - **Graceful failure isolation** -- failed charges and timestamp overflows disable auto-renewal (`auto_renew = false`) for the individual subscription instead of reverting the entire batch.
 - **Deduplication** -- a subscriber cannot hold two active subscriptions to the same service simultaneously.
 - **Trial abuse prevention** -- a subscriber who already used a free trial cannot re-subscribe without `auto_renew=true`, preventing infinite free trials.
@@ -138,6 +138,7 @@ Creates a new subscription service.
 - `period_secs > 0` -> `InvalidPeriod`
 - `approve_periods > 0` -> `InvalidPeriod`
 - `name` non-empty -> `InvalidServiceName`
+- approval window arithmetic must fit in the contract's timestamp and token amount calculations -> `TimestampOverflow`
 
 **Effects:**
 - Stores `Service` under `DataKey::Service(service_id)`
@@ -269,6 +270,8 @@ Batch-charges due subscriptions for a service. This is the core billing function
 
 **Pagination:** Soroban transactions have finite resource limits (read/write ledger entries and bytes per transaction). Large subscriber sets must be processed in batches using `offset` and `limit`. The returned `ProcessResult.total` indicates the total number of subscriptions, allowing the caller to determine how many batches are needed.
 
+`process()` also enforces a hard page-size cap of `100` subscriptions per call. Passing a larger `limit` processes only the first `100` entries in that window.
+
 **Example batch loop:**
 ```
 // Process 20 subscriptions per transaction
@@ -351,6 +354,21 @@ Returns all subscriptions for a subscriber. Gracefully skips subscriptions that 
 
 **Auth:** `subscriber`
 
+#### `get_subscriber_subs_paginated`
+
+```rust
+fn get_subscriber_subs_paginated(
+    env: Env,
+    subscriber: Address,
+    offset: u32,
+    limit: u32,
+) -> SubscriptionPage
+```
+
+Returns one page of subscriptions for a subscriber plus the total result count. `limit` is capped at `100` per call.
+
+**Auth:** `subscriber`
+
 ---
 
 #### `get_merchant_subs`
@@ -364,6 +382,22 @@ fn get_merchant_subs(
 ```
 
 Returns all subscriptions for a service. Gracefully skips subscriptions that have expired from storage.
+
+**Auth:** `merchant` (must own the service)
+
+#### `get_merchant_subs_paginated`
+
+```rust
+fn get_merchant_subs_paginated(
+    env: Env,
+    merchant: Address,
+    service_id: u64,
+    offset: u32,
+    limit: u32,
+) -> Result<SubscriptionPage, ContractError>
+```
+
+Returns one page of subscriptions for a service plus the total result count. `limit` is capped at `100` per call.
 
 **Auth:** `merchant` (must own the service)
 
